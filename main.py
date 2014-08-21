@@ -13,17 +13,6 @@ dumpURLs   = logDir+'/listAllURL.txt'
 
 downloadFilesOnStartup = True
 
-#The console will only print an event to stdout if it's priority is in the list.
-""" 
-logLevel = [0,    #Debug <white text>
-            1,    #Info <blue text>
-            2,    #Warning <yellow text>
-            3,    #Error <red text>
-            4,    #Crash Log <dark red text>
-            ]
-"""
-logLevel = [0,1,2,3,4]
-
 #--------------------------------===Constants===--------------------------------
 contentTypes = { 'htm':'text/html',
                  'css':'text/css',
@@ -37,19 +26,16 @@ contentTypes = { 'htm':'text/html',
                 'woff':'application/font-woff' }
 
 binaryFiles = ['png','ico','gif'] 
-logStrings = ['[ DEBUG ]','[ INFO ] ','[WARNING]','[ ERROR ]','[ CRASH ]']
-logColors =  [ 0x0f,       0x09,      0x0e,       0x0c,         0xc0   ]
-#---------------------------------===Imports===---------------------------------
-import cgi, ast      
-import ctypes
-import calendar, time, datetime
-import urllib 
-import os, sys 
-import json
-import logging
-from warnings import filterwarnings, catch_warnings
-from BaseHTTPServer import BaseHTTPRequestHandler, HTTPServer 
 
+#---------------------------------===Imports===---------------------------------
+import cgi, ast, json  #Modules for string parsing and data formatting    
+import ctypes  #Access to low-level system calls and OS API features
+import calendar, time, datetime #Modules for timestamps
+import os, sys  #Modules for mid-level system operations and filesystem operations
+import logging  #Module for pretty-ifying the console and logging to a file
+from warnings import filterwarnings, catch_warnings  #Should cause any runtime exceptions to become non-fatal and instead print to STDERR
+from BaseHTTPServer import BaseHTTPRequestHandler, HTTPServer  #Python's built-in bare-bones HTTP server
+import urllib  #Module for downloading content from a URL
 #-------------------------------===Class Defs===-------------------------------
     
 class Server:
