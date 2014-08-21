@@ -7,9 +7,13 @@ Requirements:
  - Web browser (Chrome recommended)
  
 To run:
+
  1) Put all the files into an empty folder
+
  2) Run main.py with the PYTHON 2.7 (!) interperter
+ 
  3) Wait for any file downlaods to finish (if any)
+ 
  4) Go to http://<ip>:<port>  (default is http://localhost:5042)
 
 
@@ -18,7 +22,7 @@ Default Config:
 ip = 'localhost'            <---The internal IP and port that the HTTP server will be started on
 port = 5042
 
-liveURL = ''
+liveURL = 'http://www.modkit.com/vex/editor'
 
 sourceDir = 'modkitSource'  <---This is the folder where the page's source will be cached/read from
 
