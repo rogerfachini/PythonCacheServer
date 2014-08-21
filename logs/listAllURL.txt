@@ -1,6 +1,5 @@
 /favicon.ico
 /index.htm
-/mod.txt
 /fonts/dejavusansmono-bold_web-webfont.svg
 /fonts/dejavusansmono-bold_web-webfont.ttf
 /fonts/dejavusansmono-bold_web-webfont.woff
@@ -307,4 +306,3 @@
 /images/vex/components/controller.png
 /images/vex/components/gyro-150x.png
 /images/vex/components/gyro-36x.png
-/images/vex/components/gyro-selected.png

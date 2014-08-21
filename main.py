@@ -42,7 +42,7 @@ logColors =  [ 0x0f,       0x09,      0x0e,       0x0c,         0xc0   ]
 #---------------------------------===Imports===---------------------------------
 import cgi    
 import ctypes
-import calendar, time
+import calendar, time, datetime
 import urllib 
 import os, sys 
 from BaseHTTPServer import BaseHTTPRequestHandler, HTTPServer 
@@ -54,20 +54,28 @@ class Logger:
         with open(dumpURLs,"a+") as file:
             self.existingURLs = file.readlines()
 
+        self.createLogFile()
+
     def setTermColor(self,color):
         bool = ctypes.windll.kernel32.SetConsoleTextAttribute(self.std_out_handle, color)
         return bool
 
-    def creatLogFile(self):
-        #TODO: Open new log file with .log type and timestamp as name
-        pass
+    def createLogFile(self):
+        self.logFile = '%s/%s.log' % (logDir,
+                                      str(datetime.datetime.now()).split('.')[0]
+                                                                  .replace(':','.'))
+        t = open(self.logFile,"a+")
+        print '[PRE-LOG] Created Log File:',self.logFile
+        t.close()
 
     def LogToFile(self,format, *args, **keywords):
             if keywords.has_key('level'): level = keywords['level']             
             else: level = 1
                 
             string = ("%s %s\n" % (logStrings[level], format%args))
-            #TODO: Actually log to a file here
+
+            with open(self.logFile,"a+") as file:
+                file.write(string)
 
             self.setTermColor(logColors[level])
             if level in logLevel:
@@ -80,8 +88,7 @@ class Logger:
             file.write(URL+'\n')
             self.existingURLs.append(URL+'\n')
 
-            #TODO: Make this log.LogToFile
-            print 'Wrote new URL:',URL
+            log.LogToFile('%s: %s','Logged a new path:',URL ,level=0)
 
     def _logExistingFiles(self):                                                                                                  
         r = []                                                                                                            
@@ -104,13 +111,12 @@ class Server:
             for file in log.existingURLs:
                 f = file.replace('\n','').replace(sourceDir,'').replace('\\','/')
                 self.serverSteal(f)
-        #TODO: These should be log.LogToFile
-        print 'Starting creation of Server Instance...'
+        log.LogToFile('%s','Starting creation of server instance')
         self.server = HTTPServer((ip, port), self._customHandler) 
-        print 'Server Instance created on',ip+':'+str(port)
+        log.LogToFile('%s http://%s:%s','Server Instance started on:', ip, str(port))
 
     def ServeForever(self):
-        print 'Now serving HTTP Requests!'
+        log.LogToFile('%s','Now serving HTTP Requests!')
         self.server.serve_forever()  
 
     class _customHandler(BaseHTTPRequestHandler):
@@ -218,8 +224,8 @@ class Server:
             file = folder+filePart+type                 
         
         f = open(file,'a')                          
-        f.write(data)                               
-        print 'Wrote',len(str(data)),'bytes to',file   
+        f.write(data) 
+        log.LogToFile('Wrote %s bytes to file: (%s)',len(str(data)),file,level=0)                              
         f.close()                                  
     
     def serverSteal(self,URL):
@@ -228,9 +234,9 @@ class Server:
         *Called for each file requessted by the application*
         Creates a cached copy of the file in a local directory from the server if it does not already exist locally
         """        
+        log.logURL(URL)
 
         if os.path.isfile(sourceDir+URL):      
-            log.logURL(URL)
             return                                
         directory = (URL).split('/')[:-1]       
         directory = '/'.join(directory)+'/'       
@@ -245,7 +251,6 @@ class Server:
                           level=0) 
 
             urllib.urlretrieve(liveURL+URL, sourceDir+URL)
-            log.logURL(URL)
         except BaseException as er:          
             log.LogToFile(' %s %s',               
                           'ERROR DOWNLOADING FILE:',
@@ -254,17 +259,17 @@ class Server:
 
 if __name__ == '__main__':  
 
-    sys.stdout.write('Checking if main folders exist..')
+    sys.stdout.write('[PRE-LOG] Checking if main folders exist..')
     if not os.path.exists(sourceDir):
-        print '\nWebpage source directory does not exist! Creating...'
+        print '\n[PRE-LOG] Webpage source directory does not exist! Creating...'
         os.makedirs(sourceDir)
 
     if not os.path.exists(logDir):
-        print '\nLog file directory does not exist! Creating...'
+        print '\n[PRE-LOG] Log file directory does not exist! Creating...'
         os.makedirs(logDir)
 
     if not os.path.exists(projectDir):
-        print '\nProject save directory does not exist! Creating...'
+        print '\n[PRE-LOG] Project save directory does not exist! Creating...'
         os.makedirs(projectDir)
     print '..Done!'
 
