@@ -46,81 +46,38 @@ import calendar, time, datetime
 import urllib 
 import os, sys 
 import json
+import logging
+from warnings import filterwarnings, catch_warnings
 from BaseHTTPServer import BaseHTTPRequestHandler, HTTPServer 
 
 #-------------------------------===Class Defs===-------------------------------
-class Logger:
-    def __init__(self):
-        self.std_out_handle = ctypes.windll.kernel32.GetStdHandle(-11)
-        with open(dumpURLs,"a+") as file:
-            self.existingURLs = file.readlines()
-
-        self.createLogFile()
-
-    def setTermColor(self,color):
-        bool = ctypes.windll.kernel32.SetConsoleTextAttribute(self.std_out_handle, color)
-        return bool
-
-    def createLogFile(self):
-        self.logFile = '%s/%s.log' % (logDir,
-                                      str(datetime.datetime.now()).split('.')[0]
-                                                                  .replace(':','.'))
-        t = open(self.logFile,"a+")
-        print '[PRE-LOG] Created Log File:',self.logFile
-        t.close()
-
-    def LogToFile(self,format, *args, **keywords):
-            if keywords.has_key('level'): level = keywords['level']             
-            else: level = 1
-                
-            string = ("%s %s\n" % (logStrings[level], format%args))
-
-            with open(self.logFile,"a+") as file:
-                file.write(string)
-
-            self.setTermColor(logColors[level])
-            if level in logLevel:
-                print string,
-
-    def logURL(self,URL):
-        if URL in self.existingURLs or URL+'\n' in self.existingURLs:
-            return
-        with open(dumpURLs, "a") as file:
-            file.write('\n'+URL)
-            self.existingURLs.append(URL+'\n')
-
-            log.LogToFile('%s: %s','Logged a new path:',URL ,level=0)
-
-    def _logExistingFiles(self):                                                                                                  
-        r = []                                                                                                            
-        subdirs = [x[0] for x in os.walk(sourceDir)]                                                                            
-        for subdir in subdirs:                                                                                            
-            files = os.walk(subdir).next()[2]                                                                             
-            if (len(files) > 0):                                                                                          
-                for file in files:                                                                                        
-                    r.append((subdir + "\\" + file).replace('\\','/').replace(sourceDir,''))                                                                         
-        for f in r:
-            self.logURL(f)
-            
+    
 class Server:
     def __init__(self, ip, port):
         """
         *Called on object creation*
         Creates a HTTPServer object with a custom handler and starts handling requests
         """
+        self.logging = logging.getLogger('server.root')
+
+        with open(dumpURLs,"a+") as file:
+                self.existingURLs = file.readlines()
+                self.logging.debug('Read URL dump file, %i total entries.'%len(self.existingURLs))
+
         if downloadFilesOnStartup:
-            for file in log.existingURLs:
+            for file in self.existingURLs:
                 f = file.replace('\n','').replace(sourceDir,'').replace('\\','/')
                 self.serverSteal(f)
 
         self.save = self.SaveHandler()
 
-        log.LogToFile('%s','Starting creation of server instance')
+        self.logging.info('Starting creation of server instance')
         self.server = HTTPServer((ip, port), self._customHandler) 
-        log.LogToFile('%s http://%s:%s','Server Instance started on:', ip, str(port))
+        self.logging.info('Server Instance started on: http://%s:%s', ip, str(port))
+        
 
     def ServeForever(self):
-        log.LogToFile('%s','Now serving HTTP Requests!')
+        self.logging.info('Now serving HTTP Requests!')
         self.server.serve_forever()  
 
     class _customHandler(BaseHTTPRequestHandler):
@@ -133,7 +90,7 @@ class Server:
             *Called on a GET request*
             """
             path = self.path                                             
-
+            NO += 1
             if path == '/':                                              
                 if not os.path.isfile(sourceDir+'/index.htm'):           
                     urllib.urlretrieve (liveURL, 
@@ -218,20 +175,22 @@ class Server:
                 self.wfile.write(u)
 
             elif 'updateProject' in self.path:
+                #TODO: Finish this
                 for idx in range(0,len(postvars['state'])):
                     data = postvars
                     print postvars
 
             elif 'loadProject' in self.path:
-                log.LogToFile('%s%s','Cannot process request: ',self.path,level=2)
+                #TODO: Send the appropriate JSON to the server for loading a file
+                logging.error('Cannot process request: %s',self.path)
             else:
-                log.LogToFile('%s%s','Cannot process request: ',self.path,level=2)
+                logging.error('Cannot process request: %s',self.path)
                     
         def log_error(self, format, *args):
-            log.LogToFile(format, *args,level=4)
+            serverLogger.error(format,*args)
 
-        def log_message(self,format, *args, **keywords):
-            log.LogToFile(format,*args,**keywords)
+        def log_message(self,format, *args):
+            serverLogger.debug(format,*args)
 
     class SaveHandler:
         def __init__(self):
@@ -246,8 +205,8 @@ class Server:
 
             f = open(file,'a')                          
             f.write(data) 
-            log.LogToFile('Wrote %s bytes to file: (%s)',
-                          len(str(data)),file,level=0)                              
+            logging.info('Wrote %s bytes to file: (%s)',
+                          len(str(data)),file)                              
             f.close() 
 
             projData = {"ProjectID": '%s-%i' %(name,id) , 
@@ -278,18 +237,34 @@ class Server:
                                     "title": data['name']}
                         self.projectData['projects'].append(projData)
                     except BaseException as er:
-                        log.LogToFile('%s %s\n          ERROR: %s',
-                                      'Corrupted save file, ignoring:',path,er,level=3)
+                        logging.warning('%s %s\n                          | ERROR: %s',
+                                      'Corrupted save file, ignoring:',path,er)
 
+    def logURL(self,URL):
+        if URL in self.existingURLs or URL+'\n' in self.existingURLs:
+            return
+        with open(dumpURLs, "a") as file:
+            file.write('\n'+URL)
+            self.existingURLs.append(URL+'\n')
 
-
+            logging.debug('Logged a new path: %s',URL)
+    def _logExistingFiles(self):                                                                                                  
+        r = []                                                                                                            
+        subdirs = [x[0] for x in os.walk(sourceDir)]                                                                            
+        for subdir in subdirs:                                                                                            
+            files = os.walk(subdir).next()[2]                                                                             
+            if (len(files) > 0):                                                                                          
+                for file in files:                                                                                        
+                    r.append((subdir + "\\" + file).replace('\\','/').replace(sourceDir,''))                                                                         
+        for f in r:
+            self.logURL(f)
     def serverSteal(self,URL):
             
         """
         *Called for each file requessted by the application*
         Creates a cached copy of the file in a local directory from the server if it does not already exist locally
         """        
-        log.logURL(URL)
+        self.logURL(URL)
 
         if os.path.isfile(sourceDir+URL):      
             return                                
@@ -300,36 +275,43 @@ class Server:
             os.makedirs(sourceDir+directory)      
         
         try:
-            log.LogToFile(' %s %s',                    
-                          'Downloading:',
-                          liveURL+URL,
-                          level=0) 
-
+            self.logging.debug('Downloading: %s', liveURL+URL) 
             urllib.urlretrieve(liveURL+URL, sourceDir+URL)
         except BaseException as er:          
-            log.LogToFile(' %s %s',               
-                          'ERROR DOWNLOADING FILE:',
-                          er,
-                          level=3)
+            self.logging.warn('ERROR DOWNLOADING FILE: %s', er)
 
 if __name__ == '__main__':  
+    logFile = '%s/%s.log' % (logDir,
+                                 str(datetime.datetime.now()).split('.')[0]
+                                                             .replace(':','.'))
+    logging.basicConfig(level=logging.DEBUG,
+                    format='%(asctime)s [%(levelname)-7s] %(name)-15s | %(message)s',
+                    datefmt='%Y-%d %H:%M:%S',
+                    filename=logFile,
+                    filemode='w')
 
-    sys.stdout.write('[PRE-LOG] Checking if main folders exist..')
+    console = logging.StreamHandler()
+    console.setLevel(logging.DEBUG)
+    formatter = logging.Formatter('[%(levelname)-7s] %(name)-15s | %(message)s')
+    console.setFormatter(formatter)
+    logging.getLogger('').addHandler(console)
+    logging.captureWarnings(True)
+    serverLogger = logging.getLogger('server.handler')
+
+    print '[<level>] <name>          | <message>\n'
+    logging.info('Checking if main folders exist..')
     if not os.path.exists(sourceDir):
-        print '\n[PRE-LOG] Webpage source directory does not exist! Creating...'
+        logging.info('Webpage source directory does not exist! Creating...')
         os.makedirs(sourceDir)
 
     if not os.path.exists(logDir):
-        print '\n[PRE-LOG] Log file directory does not exist! Creating...'
+        logging.info('Log file directory does not exist! Creating...')
         os.makedirs(logDir)
 
     if not os.path.exists(projectDir):
-        print '\n[PRE-LOG] Project save directory does not exist! Creating...'
+        logging.info('Project save directory does not exist! Creating...')
         os.makedirs(projectDir)
-    print '..Done!'
-
-    log = Logger()         
-    log._logExistingFiles()
+    logging.info('..Done!')
 
     s = Server(ip,port)    
     s.ServeForever()       
