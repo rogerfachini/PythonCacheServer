@@ -12,7 +12,7 @@ To run:
 
  2) Run main.py with the PYTHON 2.7 (!) interperter
  
- 3) Wait for any file downlaods to finish (if any)
+ 3) Wait for any file downloads to finish (if any)
  
  4) Go to http://<ip>:<port>  (default is http://localhost:5042)
 
