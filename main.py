@@ -90,7 +90,7 @@ class Server:
             *Called on a GET request*
             """
             path = self.path                                             
-            NO += 1
+
             if path == '/':                                              
                 if not os.path.isfile(sourceDir+'/index.htm'):           
                     urllib.urlretrieve (liveURL, 
@@ -108,9 +108,6 @@ class Server:
                 self.send_response(200)
 
                 self.send_header('Content-Type','application/json')
-                self.send_header('Cache-Control','no-cache')
-                self.send_header('Vary','Accept-Encoding')
-                self.send_header('Alternate-Protocol','80:quic,80:qui')
                 self.end_headers()
 
                 json_obj = json.dumps(s.save.projectData)
@@ -149,7 +146,8 @@ class Server:
             else:
                 return
 
-            if 'downloadProject' in self.path :
+            if 'downloadProject' in self.path:   
+                #We're TECHNICALY supposed to send this back to the client, but we save locally instead
                 data = ast.literal_eval(postvars['data'][0])
                 s.save.writeSave(data['name'],
                                  projectDir,
@@ -160,28 +158,37 @@ class Server:
                 for idx in range(0,len(postvars['state'])):
                     data = postvars['state'][idx]
                     name = postvars['title'][idx]
-                    id = s.save.writeSave(name,
-                                     projectDir,
-                                     data)
+                    id = s.save.writeSave(name, projectDir, data)
                 self.send_response(200)
                 self.send_header('Content-Type','text/html')
-                self.send_header('Cache-Control','no-cache')
-                self.send_header('Vary','Accept-Encoding')
-                self.send_header('Alternate-Protocol','80:quic,80:qui')
                 self.end_headers()
 
-                json_obj = json.dumps({"ProjectID": id, "UserID": "tnter1234@gmail.com"})
+                json_obj = json.dumps({"ProjectID": id, "UserID": s.save.user})
                 u = unicode(str(json_obj), "utf-8")
                 self.wfile.write(u)
 
             elif 'updateProject' in self.path:
-                #TODO: Finish this
-                for idx in range(0,len(postvars['state'])):
-                    data = postvars
-                    print postvars
+                data = postvars
+                id = postvars['ProjectID'][0]
+
+                newData = ast.literal_eval(postvars['state'][0])
+                oldData = ast.literal_eval(s.save.readSave(id))                
+                oldData.update(newData)
+                s.save.writeTruncateSave(id,projectDir,oldData)
+
+                self.send_response(200)
+                self.send_header('Content-Type','text/html')
+                self.end_headers()
+
+                json_obj = json.dumps({"ProjectID": id, "UserID": s.save.user})
+                u = unicode(str(json_obj), "utf-8")
+                self.wfile.write(u)
 
             elif 'loadProject' in self.path:
                 #TODO: Send the appropriate JSON to the server for loading a file
+                logging.error('Cannot process request: %s',self.path)
+            elif 'deleteProject' in self.path:
+                #TODO: Copy the file to a 'deleted projects' directory
                 logging.error('Cannot process request: %s',self.path)
             else:
                 logging.error('Cannot process request: %s',self.path)
@@ -218,8 +225,37 @@ class Server:
             self.projectData['projects'].append(projData)
             return '%s-%i' %(name,id) 
 
+        def writeTruncateSave(self,name,path,data):
+            file = '%s/%s.mkc' %(path,name)
+            f = open(file,'w')                          
+            f.write(str(data)) 
+            logging.info('Truncated file and wrote %s bytes to file: (%s)',
+                          len(str(data)),file)                              
+            f.close() 
+
+            projData = {"ProjectID": name, 
+                        "updated": time.strftime('%a %b %d %H:%M:%S %Y',   #Thu Aug 21 09:21:40 2014
+                                                 time.localtime(os.path.getmtime(file))), 
+                        "UserID": self.user, 
+                        "title": data['name']}
+            idx=0
+            for project in self.projectData['projects']:
+                if project['ProjectID'] == name:                   
+                    break
+                idx += 1
+
+            self.projectData['projects'].pop(idx)
+            self.projectData['projects'].append(projData)
+            return name
+
         def readSave(self,fileName):
-            pass                             
+            f = open(projectDir+'/'+fileName+'.mkc','r')                          
+            data = f.read()
+            logging.info('Read %s bytes from file: (%s)',
+                          len(str(data)),fileName)                              
+            f.close() 
+
+            return data            
         def _checkProjectData(self):
             for name in os.listdir(projectDir):
                 path = '%s/%s'%(projectDir,name)
@@ -239,7 +275,7 @@ class Server:
                     except BaseException as er:
                         logging.warning('%s %s\n                          | ERROR: %s',
                                       'Corrupted save file, ignoring:',path,er)
-
+    
     def logURL(self,URL):
         if URL in self.existingURLs or URL+'\n' in self.existingURLs:
             return
