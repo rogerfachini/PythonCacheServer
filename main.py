@@ -185,8 +185,17 @@ class Server:
                 self.wfile.write(u)
 
             elif 'loadProject' in self.path:
-                #TODO: Send the appropriate JSON to the server for loading a file
-                logging.error('Cannot process request: %s',self.path)
+                data = s.save.readSave(postvars['ProjectID'][0])
+                data = ast.literal_eval(data)
+
+                self.send_response(200)
+                self.send_header('Content-Type','text/html')
+                self.end_headers()
+
+                json_obj = json.dumps({"state": str(data).replace("'",'"')})
+                u = unicode(str(json_obj), "utf-8")
+                self.wfile.write(u)
+                
             elif 'deleteProject' in self.path:
                 #TODO: Copy the file to a 'deleted projects' directory
                 logging.error('Cannot process request: %s',self.path)
