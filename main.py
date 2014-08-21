@@ -40,11 +40,12 @@ binaryFiles = ['png','ico','gif']
 logStrings = ['[ DEBUG ]','[ INFO ] ','[WARNING]','[ ERROR ]','[ CRASH ]']
 logColors =  [ 0x0f,       0x09,      0x0e,       0x0c,         0xc0   ]
 #---------------------------------===Imports===---------------------------------
-import cgi    
+import cgi, ast      
 import ctypes
 import calendar, time, datetime
 import urllib 
 import os, sys 
+import json
 from BaseHTTPServer import BaseHTTPRequestHandler, HTTPServer 
 
 #-------------------------------===Class Defs===-------------------------------
@@ -82,10 +83,10 @@ class Logger:
                 print string,
 
     def logURL(self,URL):
-        if URL+'\n' in self.existingURLs:
+        if URL in self.existingURLs or URL+'\n' in self.existingURLs:
             return
         with open(dumpURLs, "a") as file:
-            file.write(URL+'\n')
+            file.write('\n'+URL)
             self.existingURLs.append(URL+'\n')
 
             log.LogToFile('%s: %s','Logged a new path:',URL ,level=0)
@@ -111,6 +112,9 @@ class Server:
             for file in log.existingURLs:
                 f = file.replace('\n','').replace(sourceDir,'').replace('\\','/')
                 self.serverSteal(f)
+
+        self.save = self.SaveHandler()
+
         log.LogToFile('%s','Starting creation of server instance')
         self.server = HTTPServer((ip, port), self._customHandler) 
         log.LogToFile('%s http://%s:%s','Server Instance started on:', ip, str(port))
@@ -137,18 +141,25 @@ class Server:
                 f = open(sourceDir+'/index.htm')                         
                 self.send_response(200)                                  
                 self.send_header('Content-type','text/html')             
-                self.end_headers()                                       
-                self.wfile.write(f.read())                               
+                self.end_headers()       
+                data = f.read().replace('var preloggedInUser',
+                                        'var preloggedInUser="tnter1234@gmail.com"')                                
+                self.wfile.write(data)                               
                 f.close()                                                
 
-            elif 'getProjects' in path:                                  
-                #TODO: Reverse engineer how this transaction occurs                                                         
-                self.log_message(' %s',                                  
-                                 'Unable to handle getProjects request!',
-                                 level=2) 
+            elif 'getProjects' in path:   
+                self.send_response(200)
 
-                self.send_response(500)
-            
+                self.send_header('Content-Type','application/json')
+                self.send_header('Cache-Control','no-cache')
+                self.send_header('Vary','Accept-Encoding')
+                self.send_header('Alternate-Protocol','80:quic,80:qui')
+                self.end_headers()
+
+                json_obj = json.dumps(s.save.projectData)
+                u = unicode(str(json_obj), "utf-8")
+
+                self.wfile.write(u)
             else:                                                      
                 s.serverSteal(path)                                
                 self.send_response(200)                              
@@ -171,11 +182,7 @@ class Server:
                 self.wfile.write(f.read())                             
                 f.close()                                              
 
-        def do_POST(self):
-            path = self.path
-            temp = path.split('/')
-            name = temp[-1].split('.')[:-1][0]
-            type = temp[-1].split('.')[-1]
+        def do_POST(self):            
             ctype, pdict = cgi.parse_header(self.headers.getheader('content-type'))
             if ctype == 'multipart/form-data':
                 postvars = cgi.parse_multipart(self.rfile, pdict)
@@ -184,50 +191,98 @@ class Server:
                 postvars = cgi.parse_qs(self.rfile.read(length), keep_blank_values=1)
             else:
                 return
-            s.writeFile(projectDir,name,'.'+type,str(postvars)) 
-            self.send_response(200)
-        
+
+            if 'downloadProject' in self.path :
+                data = ast.literal_eval(postvars['data'][0])
+                s.save.writeSave(data['name'],
+                                 projectDir,
+                                 postvars['data'][0])
+                self.send_response(200)
+
+            elif 'saveProject' in self.path:
+                for idx in range(0,len(postvars['state'])):
+                    data = postvars['state'][idx]
+                    name = postvars['title'][idx]
+                    id = s.save.writeSave(name,
+                                     projectDir,
+                                     data)
+                self.send_response(200)
+                self.send_header('Content-Type','text/html')
+                self.send_header('Cache-Control','no-cache')
+                self.send_header('Vary','Accept-Encoding')
+                self.send_header('Alternate-Protocol','80:quic,80:qui')
+                self.end_headers()
+
+                json_obj = json.dumps({"ProjectID": id, "UserID": "tnter1234@gmail.com"})
+                u = unicode(str(json_obj), "utf-8")
+                self.wfile.write(u)
+
+            elif 'updateProject' in self.path:
+                for idx in range(0,len(postvars['state'])):
+                    data = postvars
+                    print postvars
+
+            elif 'loadProject' in self.path:
+                log.LogToFile('%s%s','Cannot process request: ',self.path,level=2)
+            else:
+                log.LogToFile('%s%s','Cannot process request: ',self.path,level=2)
+                    
         def log_error(self, format, *args):
             log.LogToFile(format, *args,level=4)
 
         def log_message(self,format, *args, **keywords):
             log.LogToFile(format,*args,**keywords)
 
-    def writeFile(self,folder,name,type,data):
-        """
-        Creates a file in <folder> with <name><type> and writes <data> to it.
-        If the file exists, it will not overwrite it. 
-        Syntax for overwrite protection:
-            <name>~save~<version><type>
-            name.type
-            name~save~0.type
-            name~save~1.type
+    class SaveHandler:
+        def __init__(self):
+            self.user = "tnter1234@gmail.com"
+            self.projectData = {"projects": []}
+            self._checkProjectData()
+        def writeSave(self,name,path,data):
+            for id in range(0,501):
+                file = '%s/%s-%i.mkc' %(path,name,id)           
+                if not os.path.isfile(file):
+                    break
 
-        """
-        #TODO: Clean this up if possible
-        folder += '/'                                 
-        file = folder+name+type                        
-        if os.path.isfile(file):                  
-            fileList = []                         
-            for file in os.listdir(folder):              
-                if file.endswith(type) and name in file: 
-                    fileList.append(file)             
-            fileList.sort()                           
-            filePart = fileList[-1].split('.')[0]     
-            
-            if '~save~' in filePart:                 
-                version = int(filePart.split('~')[-1]) 
-                filePart = name+'~save~'+str(version+1) 
-            else:                                       
-                filePart += '~save~0'                   
+            f = open(file,'a')                          
+            f.write(data) 
+            log.LogToFile('Wrote %s bytes to file: (%s)',
+                          len(str(data)),file,level=0)                              
+            f.close() 
 
-            file = folder+filePart+type                 
-        
-        f = open(file,'a')                          
-        f.write(data) 
-        log.LogToFile('Wrote %s bytes to file: (%s)',len(str(data)),file,level=0)                              
-        f.close()                                  
-    
+            projData = {"ProjectID": '%s-%i' %(name,id) , 
+                        "updated": time.strftime('%a %b %d %H:%M:%S %Y',   #Thu Aug 21 09:21:40 2014
+                                                 time.localtime(os.path.getmtime(file))), 
+                        "UserID": self.user, 
+                        "title": name}
+
+            self.projectData['projects'].append(projData)
+            return '%s-%i' %(name,id) 
+
+        def readSave(self,fileName):
+            pass                             
+        def _checkProjectData(self):
+            for name in os.listdir(projectDir):
+                path = '%s/%s'%(projectDir,name)
+                with open(path,'r') as file:              
+                    try:
+                        data = ast.literal_eval(file.read())
+                        forName = name.replace('.mkc','')
+                        if not forName[-1].isdigit() or not forName[-2] == '-':
+                            forName += '-0'
+
+                        projData = {"ProjectID": forName, 
+                                    "updated": time.strftime('%a %b %d %H:%M:%S %Y', 
+                                                             time.localtime(os.path.getmtime(path))), 
+                                    "UserID": self.user, 
+                                    "title": data['name']}
+                        self.projectData['projects'].append(projData)
+                    except BaseException as er:
+                        log.LogToFile('%s %s\n          ERROR: %s',
+                                      'Corrupted save file, ignoring:',path,er,level=3)
+
+
+
     def serverSteal(self,URL):
             
         """

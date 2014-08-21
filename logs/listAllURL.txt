@@ -306,3 +306,5 @@
 /images/vex/components/controller.png
 /images/vex/components/gyro-150x.png
 /images/vex/components/gyro-36x.png
+/images/vex/brain-24x.png
+/images/delete_project_vexiq.png
