@@ -2,6 +2,12 @@
 __pycache__/
 *.py[cod]
 
+#---Ignore Folders: ---
+/Projects/
+*.mck
+/modkitSource
+*.log
+
 # C extensions
 *.so
 
