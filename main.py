@@ -1,19 +1,29 @@
-#Python HTTP server for caching thw page content
+#Python HTTP server for caching webpage page content
 #Written by Roger Fachini
 
 #--------------------------------===Config===--------------------------------
-ip = 'localhost'
-port = 5042
-liveURL = 'http://www.modkit.com/vex/editor'
+ip = 'localhost'  #web server IP, change to the internal network IP. 
+port = 5042       #web server port, must be unique on the network adapter
 
+#the base URL to get cached content from
+liveURL = 'http://www.modkit.com/vex/editor' 
+
+#The subdirectory to store the cached files in
 sourceDir  = 'modkitSource'
+
+#The subdir to store project save files in
 projectDir = 'Projects'
+
+#The subdir to store log files and the URL cache file in
 logDir     = 'logs'
+#The file and subdir to store the URL cache file
 dumpURLs   = logDir+'/listAllURL.txt'
 
+#When this is true, any missing files will be downloaded when the server starts
 downloadFilesOnStartup = True
 
 #--------------------------------===Constants===--------------------------------
+#Lookup dict of file types and MIME content headers
 contentTypes = { 'htm':'text/html',
                  'css':'text/css',
                  'png':'image/png',
@@ -25,17 +35,22 @@ contentTypes = { 'htm':'text/html',
                  'svg':'image/svg+xml',
                 'woff':'application/font-woff' }
 
+#File types that should be opened in binary read mode
 binaryFiles = ['png','ico','gif'] 
+
+#GET paths that need to be redirected to a specific URL
+overrideURLs = {'/favicon.ico':'http://www.modkit.com/favicon.ico'}
 
 #---------------------------------===Imports===---------------------------------
 import cgi, ast, json  #Modules for string parsing and data formatting    
-import ctypes  #Access to low-level system calls and OS API features
+import ctypes          #Access to low-level system calls and OS API features
+import urllib          #Module for downloading content from a URL
+import os, sys         #Modules for mid-level system operations and filesystem operations
+import logging         #Module for pretty-ifying the console and logging to a file
 import calendar, time, datetime #Modules for timestamps
-import os, sys  #Modules for mid-level system operations and filesystem operations
-import logging  #Module for pretty-ifying the console and logging to a file
-from warnings import filterwarnings, catch_warnings  #Should cause any runtime exceptions to become non-fatal and instead print to STDERR
+from warnings import filterwarnings, catch_warnings            #Should cause any runtime exceptions to become non-fatal and instead print to STDERR
 from BaseHTTPServer import BaseHTTPRequestHandler, HTTPServer  #Python's built-in bare-bones HTTP server
-import urllib  #Module for downloading content from a URL
+
 #-------------------------------===Class Defs===-------------------------------
     
 class Server:
@@ -95,6 +110,7 @@ class Server:
 
                 self.send_header('Content-Type','application/json')
                 self.end_headers()
+                s.save._checkProjectData()
 
                 json_obj = json.dumps(s.save.projectData)
                 u = unicode(str(json_obj), "utf-8")
@@ -131,7 +147,7 @@ class Server:
                 postvars = cgi.parse_qs(self.rfile.read(length), keep_blank_values=1)
             else:
                 return
-
+            s.save._checkProjectData()
             if 'downloadProject' in self.path:   
                 #We're TECHNICALY supposed to send this back to the client, but we save locally instead
                 data = ast.literal_eval(postvars['data'][0])
@@ -183,14 +199,16 @@ class Server:
                 self.wfile.write(u)
                 
             elif 'deleteProject' in self.path:
-                #TODO: Copy the file to a 'deleted projects' directory
                 logging.error('Cannot process request: %s',self.path)
+
+                self.send_response(200)
+                s.save.psudoDelete(postvars['ProjectID'][0],projectDir)
+
             else:
                 logging.error('Cannot process request: %s',self.path)
                     
         def log_error(self, format, *args):
             serverLogger.error(format,*args)
-
         def log_message(self,format, *args):
             serverLogger.debug(format,*args)
 
@@ -199,6 +217,7 @@ class Server:
             self.user = "tnter1234@gmail.com"
             self.projectData = {"projects": []}
             self._checkProjectData()
+
         def writeSave(self,name,path,data):
             for id in range(0,501):
                 file = '%s/%s-%i.mkc' %(path,name,id)           
@@ -242,18 +261,36 @@ class Server:
             self.projectData['projects'].pop(idx)
             self.projectData['projects'].append(projData)
             return name
+        def psudoDelete(self,name,path):
+            file = '%s/%s.mkc'%(path,name)
+            try:
+                os.rename(file,file+'.deleted')
+            except BaseException as er:
+                serverLogger.exception(er)
+
+            idx=0
+            for project in self.projectData['projects']:
+                if project['ProjectID'] == name:                   
+                    break
+                idx += 1
+            serverLogger.debug('Deleted %s',name)
+            self.projectData['projects'].pop(idx)
 
         def readSave(self,fileName):
-            f = open(projectDir+'/'+fileName+'.mkc','r')                          
+            emptyFile = not os.path.isfile(projectDir+'/'+fileName+'.mkc')
+            f = open(projectDir+'/'+fileName+'.mkc','r+')                          
             data = f.read()
             logging.info('Read %s bytes from file: (%s)',
                           len(str(data)),fileName)                              
             f.close() 
-
+            if emptyFile:
+                return '{}'
             return data            
         def _checkProjectData(self):
+            self.projectData = {"projects": []}
             for name in os.listdir(projectDir):
                 path = '%s/%s'%(projectDir,name)
+                if name.endswith('.deleted'): continue
                 with open(path,'r') as file:              
                     try:
                         data = ast.literal_eval(file.read())
@@ -312,26 +349,35 @@ class Server:
             self.logging.warn('ERROR DOWNLOADING FILE: %s', er)
 
 if __name__ == '__main__':  
-    logFile = '%s/%s.log' % (logDir,
-                                 str(datetime.datetime.now()).split('.')[0]
-                                                             .replace(':','.'))
+    #Only run this code if this is the file being run (not imported)
+
+    logFile = '%s/%s.log' % (logDir, #Generate a log file path and name, with the name as a date and timestamp
+                             str(datetime.datetime.now()).split('.')[0]
+                                                         .replace(':','.'))
+    #Initalize the logging module 
     logging.basicConfig(level=logging.DEBUG,
                     format='%(asctime)s [%(levelname)-7s] %(name)-15s | %(message)s',
                     datefmt='%Y-%d %H:%M:%S',
                     filename=logFile,
                     filemode='w')
 
-    console = logging.StreamHandler()
-    console.setLevel(logging.DEBUG)
+    console = logging.StreamHandler() #Get a logging stream handler
+    console.setLevel(logging.DEBUG)   #and set it to log debug priority or higher
+
+    #Create a formatting object for logging to the console
     formatter = logging.Formatter('[%(levelname)-7s] %(name)-15s | %(message)s')
     console.setFormatter(formatter)
-    logging.getLogger('').addHandler(console)
-    logging.captureWarnings(True)
-    serverLogger = logging.getLogger('server.handler')
 
-    print '[<level>] <name>          | <message>\n'
+    logging.getLogger('').addHandler(console) #Add the console handler to the main handler
+    logging.captureWarnings(True)             #Allow the Warnings module's warnings to be logged
+    serverLogger = logging.getLogger('server.handler') #Create a new logger with a different name for the server handler
+
+    #Print a header to the console only (NOT logged)
+    print '[<level>] <name>          | <message>\n--------------------------------------------------'
+
+    #Check if the directories exist and create them if they do not
     logging.info('Checking if main folders exist..')
-    if not os.path.exists(sourceDir):
+    if not os.path.exists(sourceDir): 
         logging.info('Webpage source directory does not exist! Creating...')
         os.makedirs(sourceDir)
 
