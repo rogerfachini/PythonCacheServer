@@ -57,34 +57,103 @@ class Server:
     def __init__(self, ip, port):
         """
         *Called on object creation*
-        Creates a HTTPServer object with a custom handler and starts handling requests
+        Does basic server initalization, reads the URL cache file, and downloads any missing sources
         """
-        self.logging = logging.getLogger('server.root')
+        #Create a new logging instance for the server
+        self.logging = logging.getLogger('server.root')  
 
-        with open(dumpURLs,"a+") as file:
+        #Read the file containing all the known URLs that we need to cache
+        with open(dumpURLs,"a+") as file:   
                 self.existingURLs = file.readlines()
                 self.logging.debug('Read URL dump file, %i total entries.'%len(self.existingURLs))
 
+        #When it is enabled, attempt to download all files before server load. 
+        #This is really only needed when initially populating the source directory
         if downloadFilesOnStartup:
-            for file in self.existingURLs:
-                f = file.replace('\n','').replace(sourceDir,'').replace('\\','/')
+            for file in self.existingURLs: #Iterate through known URLs
+                #Format file name into a usable URL
+                f = file.replace('\n','').replace(sourceDir,'').replace('\\','/') 
+                #Attempt to download the file
                 self.serverSteal(f)
-
+        
+        #Create a new local instance of the save file handler. 
         self.save = self.SaveHandler()
 
         self.logging.info('Starting creation of server instance')
+        #Create a new HTTP server object, bind it to the ip and port, and assign it 
+        #our custom handler class
         self.server = HTTPServer((ip, port), self._customHandler) 
-        self.logging.info('Server Instance started on: http://%s:%s', ip, str(port))
-        
-
+        self.logging.info('Server Instance started on: http://%s:%s', ip, str(port))     
     def ServeForever(self):
+        """
+        WARNING: This is a BLOCKING operation!
+        Starts the HTTP server
+        """
         self.logging.info('Now serving HTTP Requests!')
+        
+        #Instruct the HTTP server to serve indefinently
         self.server.serve_forever()  
+
+    def logURL(self,URL):
+        """
+        *!Called for ALL URL REQUESTS TO THE SERVER!*
+        Write a URL to the URL cache file if it has not been called before.
+        """
+        #Check if the URl exists already in the cache file, and exit if it is
+        if URL in self.existingURLs or URL+'\n' in self.existingURLs:
+            return
+       
+        with open(dumpURLs, "a") as file:          
+            file.write('\n'+URL) #Open the cache file in write-append mode and write a newline char and the URL
+            self.existingURLs.append(URL+'\n') #Add the URl to the local list of URLs
+            logging.debug('Logged a new path: %s',URL) 
+    def _logExistingFiles(self):    
+        """
+        Iterate through the current cache directory and log the existing files as URLs
+        """                                                                                              
+        r = [] #Initalize an empty list to put URLs in                                                                                                             
+        subdirs = [x[0] for x in os.walk(sourceDir)] #Create an object with the directory tree of the cache directory                                                                           
+        for subdir in subdirs:                       #Iterate through the subdirectories in the tree                                                                                           
+            files = os.walk(subdir).next()[2]        #Advance the iteration of the tree                                                                      
+            if (len(files) > 0):                     #Make sure the directory is not empty                                                                                           
+                for file in files:                   #Iterate through each file in each subdir        
+                    #Convert the directory string into an acceptable URL and append it to the list                                                                                    
+                    r.append((subdir+"\\"+file).replace('\\','/').replace(sourceDir,'')) 
+
+        #Iterate through the list of file URLs and add them to the cache file if they do not exist                                                                          
+        for f in r:
+            self.logURL(f)
+    def serverSteal(self,URL):            
+        """
+        *Called for each file requessted by the application*
+        Creates a cached copy of the file in a local directory from the server if it does not already exist locally
+        """        
+        self.logURL(URL) #Add the requested URL to the url cache file (will exit early if the line already exists)
+
+        #Exit prematurely if the requested file already exists
+        if os.path.isfile(sourceDir+URL):      
+            return     
+        
+        #Do some string formatting to remove the filename and get just the directory                           
+        directory = (URL).split('/')[:-1]       
+        directory = '/'.join(directory)+'/'       
+
+        #Create the directory if it does not exist (urlretrieve raises an exception if the directory does not exist)
+        if not os.path.exists(sourceDir+directory):
+            os.makedirs(sourceDir+directory)      
+        
+        #Download the file, and log an error if one occurs
+        try:
+            self.logging.debug('Downloading: %s', liveURL+URL) 
+            urllib.urlretrieve(liveURL+URL, sourceDir+URL)
+        except BaseException as er:          
+            self.logging.warn('ERROR DOWNLOADING FILE: %s', er)
 
     class _customHandler(BaseHTTPRequestHandler):
         """
         *Extends the BaseHTTPRequestHandler class*
-        Defines custom handling subroutines for the server
+        Defines custom handling subroutines for the server. 
+        Responds to GET and POST requests unique to ModKit. 
         """
         def do_GET(self):
             """
@@ -125,10 +194,7 @@ class Server:
                     self.send_header('Content-type',contentTypes[fileType]) 
                 except KeyError:                                        
                     self.send_header('Content-type',contentTypes['htm']) 
-                    self.log_message(' %s [%s]',                       
-                                     'Unknown content-type for file:',
-                                     path,
-                                     level=2)                     
+                    serverLogger.error('Unknown MIME content-type for file: [%s]. Reverting to default text/html',path)                     
                 self.end_headers()   
                 #TODO: Should we open ALL files in binary-read mode?                                  
                 if fileType in binaryFiles:                             
@@ -202,7 +268,7 @@ class Server:
                 logging.error('Cannot process request: %s',self.path)
 
                 self.send_response(200)
-                s.save.psudoDelete(postvars['ProjectID'][0],projectDir)
+                s.save.psuedoDelete(postvars['ProjectID'][0],projectDir)
 
             else:
                 logging.error('Cannot process request: %s',self.path)
@@ -213,12 +279,21 @@ class Server:
             serverLogger.debug(format,*args)
 
     class SaveHandler:
+        """
+        Contains functions for writing, reading, and deleting ModKit save files 
+        (Basically just JSON text). This class also handles keeping track
+        of the current list of ModKit saves and the associated metadata
+        """
         def __init__(self):
             self.user = "tnter1234@gmail.com"
             self.projectData = {"projects": []}
             self._checkProjectData()
 
         def writeSave(self,name,path,data):
+            """
+            Create a new save file and write data to it. 
+            Will create a new file if the requested file already exists
+            """
             for id in range(0,501):
                 file = '%s/%s-%i.mkc' %(path,name,id)           
                 if not os.path.isfile(file):
@@ -240,6 +315,10 @@ class Server:
             return '%s-%i' %(name,id) 
 
         def writeTruncateSave(self,name,path,data):
+            """
+            Create a save file and write data to it. 
+            WARNING: Will truncate (overwrite) the file if a file of the same name exists!
+            """
             file = '%s/%s.mkc' %(path,name)
             f = open(file,'w')                          
             f.write(str(data)) 
@@ -248,7 +327,7 @@ class Server:
             f.close() 
 
             projData = {"ProjectID": name, 
-                        "updated": time.strftime('%a %b %d %H:%M:%S %Y',   #Thu Aug 21 09:21:40 2014
+                        "updated": time.strftime('%a %b %d %H:%M:%S %Y',   
                                                  time.localtime(os.path.getmtime(file))), 
                         "UserID": self.user, 
                         "title": data['name']}
@@ -261,7 +340,11 @@ class Server:
             self.projectData['projects'].pop(idx)
             self.projectData['projects'].append(projData)
             return name
-        def psudoDelete(self,name,path):
+        def psuedoDelete(self,name,path):
+            """
+            'Deletes' a file by changing the file type to a .deleted file. 
+            Preserves the file data until manual deletion
+            """
             file = '%s/%s.mkc'%(path,name)
             try:
                 os.rename(file,file+'.deleted')
@@ -273,11 +356,15 @@ class Server:
                 if project['ProjectID'] == name:                   
                     break
                 idx += 1
-            serverLogger.debug('Deleted %s',name)
+            serverLogger.debug('Deleted file: %s',name)
             self.projectData['projects'].pop(idx)
 
         def readSave(self,fileName):
+            """
+            Read the data out of the save file and return it. 
+            """
             emptyFile = not os.path.isfile(projectDir+'/'+fileName+'.mkc')
+
             f = open(projectDir+'/'+fileName+'.mkc','r+')                          
             data = f.read()
             logging.info('Read %s bytes from file: (%s)',
@@ -287,66 +374,38 @@ class Server:
                 return '{}'
             return data            
         def _checkProjectData(self):
-            self.projectData = {"projects": []}
-            for name in os.listdir(projectDir):
-                path = '%s/%s'%(projectDir,name)
-                if name.endswith('.deleted'): continue
-                with open(path,'r') as file:              
-                    try:
-                        data = ast.literal_eval(file.read())
-                        forName = name.replace('.mkc','')
-                        if not forName[-1].isdigit() or not forName[-2] == '-':
-                            forName += '-0'
+            """
+            Generate MetaData for all existing files in the save folder
+            """
+            self.projectData = {"projects": []} #Erase the current metadata dict
 
+            for name in os.listdir(projectDir):             #Iterate through the save directory
+                path = '%s/%s'%(projectDir,name)            #Create a full file path
+                if name.endswith('.deleted'): continue      #ignore the file if it has been 'deleted'
+                with open(path,'r') as file:                #Open the file in read-only mode  
+                    try:                                   
+                        data = ast.literal_eval(file.read())#Invoke the python compiler to convert the string into a dict
+                        forName = name.replace('.mkc','')   #Remove the file extention
+                                                            #If the file does not have a number at the end
+                        if not forName[-1].isdigit() or not forName[-2] == '-':
+                            forName += '-0'                 #Add the number
+
+                                    #The ID is the name of the file (unique to file)
                         projData = {"ProjectID": forName, 
+                                    #The timestamp of the file's last time it was edited (time format: Thu Aug 21 09:21:40 2014)
                                     "updated": time.strftime('%a %b %d %H:%M:%S %Y', 
                                                              time.localtime(os.path.getmtime(path))), 
+                                    #the user ID is the e-mail of the user
                                     "UserID": self.user, 
+                                    #The title is the display name (not unique, can have duplicates)
                                     "title": data['name']}
+                        #Add the meta to the dict 
                         self.projectData['projects'].append(projData)
+
                     except BaseException as er:
+                        #Log any errors (usually file opening or parsing errors)
                         logging.warning('%s %s\n                          | ERROR: %s',
                                       'Corrupted save file, ignoring:',path,er)
-    
-    def logURL(self,URL):
-        if URL in self.existingURLs or URL+'\n' in self.existingURLs:
-            return
-        with open(dumpURLs, "a") as file:
-            file.write('\n'+URL)
-            self.existingURLs.append(URL+'\n')
-
-            logging.debug('Logged a new path: %s',URL)
-    def _logExistingFiles(self):                                                                                                  
-        r = []                                                                                                            
-        subdirs = [x[0] for x in os.walk(sourceDir)]                                                                            
-        for subdir in subdirs:                                                                                            
-            files = os.walk(subdir).next()[2]                                                                             
-            if (len(files) > 0):                                                                                          
-                for file in files:                                                                                        
-                    r.append((subdir + "\\" + file).replace('\\','/').replace(sourceDir,''))                                                                         
-        for f in r:
-            self.logURL(f)
-    def serverSteal(self,URL):
-            
-        """
-        *Called for each file requessted by the application*
-        Creates a cached copy of the file in a local directory from the server if it does not already exist locally
-        """        
-        self.logURL(URL)
-
-        if os.path.isfile(sourceDir+URL):      
-            return                                
-        directory = (URL).split('/')[:-1]       
-        directory = '/'.join(directory)+'/'       
-
-        if not os.path.exists(sourceDir+directory):
-            os.makedirs(sourceDir+directory)      
-        
-        try:
-            self.logging.debug('Downloading: %s', liveURL+URL) 
-            urllib.urlretrieve(liveURL+URL, sourceDir+URL)
-        except BaseException as er:          
-            self.logging.warn('ERROR DOWNLOADING FILE: %s', er)
 
 if __name__ == '__main__':  
     #Only run this code if this is the file being run (not imported)
