@@ -308,3 +308,6 @@
 /images/vex/components/gyro-36x.png
 /images/vex/brain-24x.png
 /images/delete_project_vexiq.png
+/images/vex/brain-150x.png
+/images/board_plugged_vector.png
+/images/board_unplugged_vector.png

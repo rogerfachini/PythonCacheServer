@@ -41,17 +41,24 @@ binaryFiles = ['png','ico','gif']
 #GET paths that need to be redirected to a specific URL
 overrideURLs = {'/favicon.ico':'http://www.modkit.com/favicon.ico'}
 
-#---------------------------------===Imports===---------------------------------
+#Characters not allowed in filenames
+badChars = ['<','>',':','"','/','\\','|','?','*'] 
+
+#------------------------------------===Imports===------------------------------------
 import cgi, ast, json  #Modules for string parsing and data formatting    
 import ctypes          #Access to low-level system calls and OS API features
 import urllib          #Module for downloading content from a URL
 import os, sys         #Modules for mid-level system operations and filesystem operations
 import logging         #Module for pretty-ifying the console and logging to a file
 import calendar, time, datetime #Modules for timestamps
-from warnings import filterwarnings, catch_warnings            #Should cause any runtime exceptions to become non-fatal and instead print to STDERR
-from BaseHTTPServer import BaseHTTPRequestHandler, HTTPServer  #Python's built-in bare-bones HTTP server
+import consoleColorer
+#Should cause any runtime exceptions to become non-fatal and instead print to STDERR
+from warnings import filterwarnings, catch_warnings
 
-#-------------------------------===Class Defs===-------------------------------
+#Python's built-in bare-bones HTTP server            
+from BaseHTTPServer import BaseHTTPRequestHandler, HTTPServer  
+
+#----------------------------------===Class Defs===----------------------------------
     
 class Server:
     def __init__(self, ip, port):
@@ -127,8 +134,7 @@ class Server:
         """
         *Called for each file requessted by the application*
         Creates a cached copy of the file in a local directory from the server if it does not already exist locally
-        """        
-        self.logURL(URL) #Add the requested URL to the url cache file (will exit early if the line already exists)
+        """      
 
         #Exit prematurely if the requested file already exists
         if os.path.isfile(sourceDir+URL):      
@@ -144,10 +150,27 @@ class Server:
         
         #Download the file, and log an error if one occurs
         try:
+
+            #Check for URLs that link to different paths on the server
+            if overrideURLs.has_key(URL):
+                link = overrideURLs[URL]
+            else:
+                link = liveURL+URL
+           
             self.logging.debug('Downloading: %s', liveURL+URL) 
-            urllib.urlretrieve(liveURL+URL, sourceDir+URL)
+            urllib.urlretrieve(link, sourceDir+URL)
+
+            f = open(sourceDir+URL,'rb')
+            d = f.read()
+            f.close()
+            if '404 Not Found' in d:   
+                os.remove(sourceDir+URL)
+                raise BaseException('Encountered 404 error when downloading')
+                    
         except BaseException as er:          
             self.logging.warn('ERROR DOWNLOADING FILE: %s', er)
+
+        self.logURL(URL) #Add the requested URL to the url cache file (will exit early if the line already exists)
 
     class _customHandler(BaseHTTPRequestHandler):
         """
@@ -159,7 +182,7 @@ class Server:
             """
             *Called on a GET request*
             """
-            path = self.path                                             
+            path = self.path    
 
             if path == '/':                                              
                 if not os.path.isfile(sourceDir+'/index.htm'):           
@@ -185,25 +208,27 @@ class Server:
                 u = unicode(str(json_obj), "utf-8")
 
                 self.wfile.write(u)
-            else:                                                      
-                s.serverSteal(path)                                
+            else:     
+                       
                 self.send_response(200)                              
                 fileType = path.split('.')[-1]  
-                             
                 try:
                     self.send_header('Content-type',contentTypes[fileType]) 
                 except KeyError:                                        
                     self.send_header('Content-type',contentTypes['htm']) 
                     serverLogger.error('Unknown MIME content-type for file: [%s]. Reverting to default text/html',path)                     
                 self.end_headers()   
-                #TODO: Should we open ALL files in binary-read mode?                                  
-                if fileType in binaryFiles:                             
-                    f = open(sourceDir+path, 'rb')                         
-                else: 
-                    f = open(sourceDir+path)                                
-                self.wfile.write(f.read())                             
-                f.close()                                              
-
+                #TODO: Should we open ALL files in binary-read mode?    
+                try:                              
+                    if fileType in binaryFiles:                             
+                        f = open(sourceDir+path, 'rb')                         
+                    else: 
+                        f = open(sourceDir+path)                                
+                    self.wfile.write(f.read())                             
+                    f.close()
+                except BaseException as er:
+                    logging.warn('Error encountered when reading file: %s',str(er))
+                                                                  
         def do_POST(self):            
             ctype, pdict = cgi.parse_header(self.headers.getheader('content-type'))
             if ctype == 'multipart/form-data':
@@ -257,7 +282,7 @@ class Server:
                 data = ast.literal_eval(data)
 
                 self.send_response(200)
-                self.send_header('Content-Type','text/html')
+                self.send_header('Content-Type','application/json')
                 self.end_headers()
 
                 json_obj = json.dumps({"state": str(data).replace("'",'"')})
@@ -265,8 +290,6 @@ class Server:
                 self.wfile.write(u)
                 
             elif 'deleteProject' in self.path:
-                logging.error('Cannot process request: %s',self.path)
-
                 self.send_response(200)
                 s.save.psuedoDelete(postvars['ProjectID'][0],projectDir)
 
@@ -294,10 +317,13 @@ class Server:
             Create a new save file and write data to it. 
             Will create a new file if the requested file already exists
             """
+            for c in badChars:
+                name = name.replace(c,'_')
             for id in range(0,501):
                 file = '%s/%s-%i.mkc' %(path,name,id)           
                 if not os.path.isfile(file):
                     break
+
 
             f = open(file,'a')                          
             f.write(data) 
@@ -319,6 +345,8 @@ class Server:
             Create a save file and write data to it. 
             WARNING: Will truncate (overwrite) the file if a file of the same name exists!
             """
+            for c in badChars:
+                name = name.replace(c,'_')
             file = '%s/%s.mkc' %(path,name)
             f = open(file,'w')                          
             f.write(str(data)) 
@@ -449,6 +477,7 @@ if __name__ == '__main__':
         os.makedirs(projectDir)
     logging.info('..Done!')
 
+    #Start the server and handle requests indefinently
     s = Server(ip,port)    
     s.ServeForever()       
 
